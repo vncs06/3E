@@ -98,11 +98,32 @@ def main():
             return
         if args.push and not args.branch:
             raise ValueError("--branch required with --push")
-        if run("git", "status", "--porcelain", "--untracked-files=normal").strip():
-            raise ValueError("Working tree must be clean before publish; use a clean knowledge branch")
-        # This command only creates a commit if all files were previously tracked.
-        # Agent must stage approved files in a separate process after reviewing diff.
-        raise ValueError("Publish is intentionally review-gated. Review diff and use GitHub PR or explicit git commit/push.")
+        branch = run("git", "branch", "--show-current")
+        if not branch or branch in {"main", "master"}:
+            raise ValueError("Publish from a dedicated knowledge branch, not main")
+        if args.push and branch != args.branch:
+            raise ValueError("Current branch does not match --branch")
+        if run("git", "diff", "--cached", "--name-only"):
+            raise ValueError("Index already has staged changes; unstage before publishing")
+        dirty = run("git", "status", "--porcelain", "--untracked-files=normal").splitlines()
+        allowed = {str(p.relative_to(ROOT)).replace("\\\\", "/") for p in paths}
+        other = [line for line in dirty if line[3:].strip().replace("\\\\", "/") not in allowed]
+        if other:
+            raise ValueError("Unrelated working-tree changes exist; separate the publish operation")
+        if not dirty:
+            print("No changes to commit")
+            return
+        run("git", "add", "--", *sorted(allowed))
+        staged = set(run("git", "diff", "--cached", "--name-only").splitlines())
+        if not staged or staged - allowed:
+            raise ValueError("Unexpected staged files")
+        print("Staged:", ", ".join(sorted(staged)))
+        run("git", "commit", "-m", args.message)
+        print("COMMITTED", run("git", "rev-parse", "--short", "HEAD"))
+        if args.push:
+            # A normal push is non-forcing and fails on divergence or insufficient permission.
+            run("git", "push", args.remote, "HEAD:refs/heads/" + args.branch)
+            print("PUSHED", args.remote, args.branch)
     except (ValueError, OSError, subprocess.CalledProcessError) as exc:
         print("ERROR:", exc, file=sys.stderr)
         sys.exit(1)
