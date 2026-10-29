@@ -29,10 +29,14 @@ def metadata(body):
         raise ValueError("Unterminated YAML frontmatter")
     lines = body[4:ending].splitlines()
     result = {}
+    current_key = None
     for line in lines:
         if ":" in line and not line.startswith(" "):
             key, val = line.split(":", 1)
-            result[key.strip()] = val.strip()
+            current_key = key.strip()
+            result[current_key] = val.strip()
+        elif line.lstrip().startswith("- ") and current_key in {"sectors", "capabilities"}:
+            result[current_key] += " " + line.strip()
     return result
 
 def validate(path):
